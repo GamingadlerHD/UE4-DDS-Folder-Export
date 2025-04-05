@@ -62,6 +62,8 @@ def get_args():  # pragma: no cover
                         help="store temporary files in the tool's directory.")
     parser.add_argument("--skip_non_texture", action="store_true",
                         help="disable errors about non-texture assets.")
+    parser.add_argument("--hdr_as_png", action="store_true",
+                        help="convert HDR textures to PNG format instead of TGA.")
     parser.add_argument("--image_filter", default="linear", type=str,
                         help=("image filter for mip generation."
                               " point, linear, and cubic are available."))
@@ -276,9 +278,28 @@ def inject(folder, file, args, texture_file=None):
 @stdout_wrapper
 def export(folder, file, args, texture_file=None):
     """Export mode (export uasset as dds)"""
+    if os.path.isdir(os.path.join(folder, file)):
+        # If input is a directory, process all .uasset files in it
+        input_dir = os.path.join(folder, file)
+        for root, _, files in os.walk(input_dir):
+            for f in files:
+                if f.endswith('.uasset'):
+                    rel_path = os.path.relpath(root, input_dir)
+                    out_dir = os.path.join(args.save_folder, rel_path)
+                    if not os.path.exists(out_dir):
+                        os.makedirs(out_dir)
+                    try:
+                        export(root, f, args)
+                    except Exception as e:
+                        print(f"Error processing {f}: {str(e)}")
+        return
+
+    # Process individual file
     src_file = os.path.join(folder, file)
     new_file = os.path.join(args.save_folder, file)
     new_dir = os.path.dirname(new_file)
+    if not os.path.exists(new_dir):
+        os.makedirs(new_dir)
 
     asset = Uasset(src_file, version=args.version)
 
@@ -322,7 +343,13 @@ def export(folder, file, args, texture_file=None):
             with get_temp_dir(disable_tempfile=args.disable_tempfile) as temp_dir:
                 temp_dds = os.path.join(temp_dir, os.path.basename(file_name))
                 dds.save(temp_dds)
-                converted_file = texconv.convert_dds_to(temp_dds, out=new_dir, fmt=args.export_as, verbose=False)
+                # Check if texture is HDR using the header's is_hdr() method
+                is_hdr = dds.header.is_hdr()
+                print(f"Format: {dds.header.get_format_as_str()}, is_hdr: {is_hdr}")
+                export_format = args.export_as
+                if is_hdr and args.hdr_as_png and args.export_as == "tga":
+                    export_format = "png"
+                converted_file = texconv.convert_dds_to(temp_dds, out=new_dir, fmt=export_format, verbose=False)
                 print(f"convert to: {converted_file}")
 
 
